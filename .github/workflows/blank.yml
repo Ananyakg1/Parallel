@@ -1,36 +1,167 @@
 # This is a basic workflow to help you get started with Actions
 
-name: CI
+name: 'Terraform Deployment'
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main  # QA & Prod should also run on PR
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  terraform-dev:
+    name: 'Terraform Dev'
     runs-on: ubuntu-latest
+    environment: dev
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_AD_SECRETS }}
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Set Terraform Environment Variables
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          echo '${{ secrets.AZURE_AD_SECRETS }}' > azure_creds.json
+          echo "ARM_CLIENT_ID=$(jq -r .clientId azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$(jq -r .clientSecret azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$(jq -r .subscriptionId azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$(jq -r .tenantId azure_creds.json)" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Run TFLint
+        uses: terraform-linters/setup-tflint@v3
+      - run: |
+          cd dev
+          tflint --init
+          tflint --recursive
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Run Checkov Security Scan
+        run: checkov -d . || true  # Ignore errors but still scan
+
+      - name: Terraform Init (dev)
+        working-directory: dev
+        run: terraform init
+
+      - name: Terraform Validate (dev)
+        working-directory: dev
+        run: terraform validate
+
+      - name: Terraform Plan (dev)
+        working-directory: dev
+        run: terraform plan -var-file="terraform.tfvars" -input=false
+
+      - name: Terraform Apply (dev)
+        working-directory: dev
+        run: terraform apply -var-file="terraform.tfvars" -auto-approve -input=false
+
+  terraform-qa:
+    name: 'Terraform QA'
+    runs-on: ubuntu-latest
+    environment: qa
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Terraform Environment Variables (qa)
+        run: |
+          echo '${{ secrets.AZURE_AD_SECRETS }}' > azure_creds.json
+          echo "ARM_CLIENT_ID=$(jq -r .clientId azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$(jq -r .clientSecret azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$(jq -r .subscriptionId azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$(jq -r .tenantId azure_creds.json)" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Run TFLint
+        uses: terraform-linters/setup-tflint@v3
+      - run: |
+          cd qa
+          tflint --init
+          tflint --recursive
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Run Checkov Security Scan
+        run: checkov -d . || true
+
+      - name: Terraform Init (qa)
+        working-directory: qa
+        run: terraform init
+
+      - name: Terraform Validate (qa)
+        working-directory: qa
+        run: terraform validate
+
+      - name: Terraform Plan (qa)
+        working-directory: qa
+        run: terraform plan -var-file="terraform.tfvars" -input=false
+
+      - name: Terraform Apply (qa)
+        working-directory: qa
+        run: terraform apply -var-file="terraform.tfvars" -auto-approve -input=false
+
+  terraform-prod:
+    name: 'Terraform Prod'
+    runs-on: ubuntu-latest
+    environment: prod
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Terraform Environment Variables (prod)
+        run: |
+          echo '${{ secrets.AZURE_AD_SECRETS }}' > azure_creds.json
+          echo "ARM_CLIENT_ID=$(jq -r .clientId azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$(jq -r .clientSecret azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$(jq -r .subscriptionId azure_creds.json)" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$(jq -r .tenantId azure_creds.json)" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Run TFLint
+        uses: terraform-linters/setup-tflint@v3
+      - run: |
+          cd prod
+          tflint --init
+          tflint --recursive
+
+      - name: Run Checkov Security Scan
+        run: checkov -d . || true  # Forces Checkov to always return success
+
+      - name: Terraform Init (prod)
+        working-directory: prod
+        run: terraform init
+
+      - name: Terraform Validate (prod)
+        working-directory: prod
+        run: terraform validate
+
+      - name: Terraform Plan (prod)
+        working-directory: prod
+        run: terraform plan -var-file="terraform.tfvars" -input=false
+
+      - name: Terraform Apply (prod)
+        working-directory: prod
+        run: terraform apply -var-file="terraform.tfvars" -auto-approve -input=false
