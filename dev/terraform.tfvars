@@ -1,4 +1,4 @@
-resource_group_name  = "devresourcegroupbit"
+resource_group_name  = "devresourcegroupbits"
 location            = "East US"
-storage_account_name = "devstorageaccountbit"
-container_name       = "devcontainerbit"
+storage_account_name = "devstorageaccountbits"
+container_name       = "devcontainerbits"
